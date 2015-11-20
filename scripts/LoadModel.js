@@ -8,11 +8,10 @@
 // Jim Awe
 // Autodesk, Inc.
 
+
     // some global vars  (TBD: consider consolidating into an object)
 var _viewerMain = null;             // the viewer
 var _viewerSecondary = null;        // the viewer
-var _curSelSetMain = [];            // init to empty array
-var _curSelSetSecondary = [];       // init to empty array
 var _loadedDocument = null;
 var _views2D = null;
 var _views3D = null;
@@ -25,8 +24,7 @@ var _blockEventSecondary = false;
 var _myAuthToken = new MyAuthToken("STG");
 
 var _lmvModelOptions = [
-    { label : "Urban House (Revit)",        urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3N0Zy9VcmJhbiUyMEhvdXNlJTIwLSUyMDIwMTUucnZ0"},
-    //{ label : "Urban House (Revit - OLD)",  urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6am1hYnVja2V0My9VcmJhbiUyMEhvdXNlJTIwLSUyMDIwMTUucnZ0"},
+    { label : "Urban House (Revit)",        urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3N0Zy9VcmJhbiUyMEhvdXNlJTIwLSUyMG5ldy5ydnQ="},
     { label : "rme-basic-sample (Revit)",   urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6am1hYnVja2V0My9ybWVfYmFzaWNfc2FtcGxlX3Byb2plY3QucnZ0"},
     { label : "ViewTest1 (Revit)",          urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6am1hYnVja2V0My9WaWV3VGVzdDEucnZ0"},
     { label : "Factory (Navisworks)",       urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6am1hYnVja2V0My9Db21wbGV0ZWQlMjBQbGFudCUyMExheW91dCUyMGNvbnN0cnVjdGlvbi5ud2Q="},
@@ -43,7 +41,11 @@ var _viewerEnv = "AutodeskProduction";
 var _myAuthToken = new MyAuthToken("PROD");
 
 var _lmvModelOptions = [
-{ label : "Urban House (Revit)",        urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvVXJiYW4lMjBIb3VzZSUyMC0lMjAyMDE1LnJ2dA=="},
+    // { label : "House",        urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bW9kZWwyMDE1LTA2LTE2LTE4LTE2LTUxLWhucHM0dG45ZDdmaTR3bnFhY2Fjdzl4b2poeHAvR2F0ZUhvdXNlLm53ZA=="},
+    // { label : "RobotArm",     urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bW9kZWwyMDE1LTA2LTE2LTE4LTEwLTUyLWhucHM0dG45ZDdmaTR3bnFhY2Fjdzl4b2poeHAvUm9ib3RBcm0uZHdmeA=="},
+    // { label : "Seat",         urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bW9kZWwyMDE1LTA2LTE2LTE4LTM4LTE0LWhucHM0dG45ZDdmaTR3bnFhY2Fjdzl4b2poeHAvU2VhdC5kd2Y="},
+
+    { label : "Urban House (Revit)",        urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvVXJiYW4lMjBIb3VzZSUyMC0lMjBuZXcucnZ0"},
     { label : "Chruch (Revit)",             urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvQ2h1cmNoUmVub3ZhdGlvbjIucnZ0"},
     { label : "SaRang - Struct (Revit)",    urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvU2FSYW5nLVN0cnVjdHVyZS0yMDE1LnJ2dA=="},
     //{ label : "SaRang - ArchBase (Revit)",  urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvU2FSYW5nLUFyY2gtQmFzZS0yMDE1LnJ2dA=="},
@@ -73,6 +75,9 @@ var _lmvModelOptions = [
 function blankOutReportPane() {
     $("#pieChart").empty();
     $("#barChart").empty();
+    $("#bar-chart").empty();
+    $("#sheetThumbs").empty();
+
 }
 
     // populate the popup menu with the avaialable models to load (from the array above)
@@ -94,7 +99,9 @@ function loadModelMenuOptions() {
      var index = parseInt($("#pu_modelToLoad option:selected").val(), 10);
      console.log("Changing model to: " + _lmvModelOptions[index].label);
      loadDocument(_lmvModelOptions[index].urn);
-     
+
+     uninitializePinPanel();
+     unitializeThemePanel();
      blankOutReportPane();
 });
 
@@ -132,15 +139,24 @@ function loadViewMenuOptions() {
     if (index >= 1000) {    // 2D views we gave a higher index to in the Popup menu
         index -= 1000;
         console.log("Changing to 2D view: " + _views2D[index].name);
-        initializeViewerSecondary();
+        switchSheet();
         loadView(_viewerSecondary, _views2D[index]);
     }
     else {
         console.log("Changing to 3D view: " + _views3D[index].name);
-        initializeViewerSecondary();
+        switchSheet();
         loadView(_viewerSecondary, _views3D[index]);
     }
 });
+
+function switchSheet() {
+    
+    if (_viewerSecondary !== null) {
+        _viewerSecondary.tearDown();     // delete everything associated with the current loaded asset
+    }
+
+    _viewerSecondary.setUp();    // set it up again for a new asset to be loaded
+}
 
 // STEPS:
 //  0)  Initialize the Viewing Runtime
@@ -159,7 +175,6 @@ function initializeViewerMain() {
     if (_viewerMain !== null) {
         _viewerMain.uninitialize();
         _viewerMain = null;
-        _curSelSetMain = [];
     }
 
     var viewerElement = document.getElementById("viewerMain");  // placeholder in HTML to stick the viewer
@@ -170,24 +185,31 @@ function initializeViewerMain() {
         alert("ERROR: Couldn't initialize main viewer!");
         console.log("ERROR Code: " + retCode);      // TBD: do real error handling here
     }
+    
+        // when the geometry is loaded, automatically run the first report
+
+    disableReportMenu();
+    _viewerMain.addEventListener(Autodesk.Viewing.GEOMETRY_LOADED_EVENT, function (event) {
+
+        enableReportMenu();
+        //runReport(-1);   // run the currently selected report (the first one if this is the first model loaded, current one if loading a subsequent model)
+        
+        $("#tab_button_1").click();
+        startReportDataLoader(runReport);
+    });
+    
         // when selecting in the Primary viewer, select the matching items in the Secondary viewer
-    _viewerMain.addEventListener("selection", function (event) {
+    _viewerMain.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, function (event) {        
         if (_blockEventSecondary)
             return;
         
-        _curSelSetMain = event.dbIdArray;
-        //console.log("LmvQty: [Selection Set Main]: ", _curSelSetMain);
-        
-            // if a single item, help debug by dumping it to the console window.
-        if (_curSelSetMain.length == 1) {
-            //var tmpObj = _viewerMain.model.getNodeById(_curSelSetMain[0]);
-            //console.debug(tmpObj);
-            
-            //_viewerSecondary.select(_curSelSetMain);  // NOTE: This is how I would expect to be able to it, but need to call work-around func below
+            // if a single item selected in 3D, select that same item in 2D.
+        var curSelSetMain = _viewerMain.getSelection();
+        //if (curSelSetMain.length === 1) {
             _blockEventMain = true;
-            workaround_2D_select(_curSelSetMain);   // Call work-around to select objects in secondary view (see file TestFuncs.js)
+            _viewerSecondary.select(curSelSetMain)//select objects in secondary view
             _blockEventMain = false;
-        }
+        //}
     });
 }
 
@@ -197,7 +219,6 @@ function initializeViewerSecondary() {
     if (_viewerSecondary !== null) {
         _viewerSecondary.uninitialize();
         _viewerSecondary = null;
-        _curSelSetSecondary = [];
     }
 
     var viewerElement = document.getElementById("viewerSecondary");  // placeholder in HTML to stick the viewer
@@ -210,33 +231,38 @@ function initializeViewerSecondary() {
     }
     
         // when selecting objects in the Secondary viewer, also select the matching itmes in the Primary viewer
-    _viewerSecondary.addEventListener("selection", function (event) {
+    _viewerSecondary.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, function (event) {
         if (_blockEventMain)
             return;
-        
-        _curSelSetSecondary = event.dbIdArray;
-        //console.log("LmvQty: [Selection Set Secondary]: ", _curSelSetSecondary);
-        
-            // if a single item, help debug by dumping it to the console window.
-        if (_curSelSetSecondary.length == 1) {
-            //var tmpObj = _viewerSecondary.model.getNodeById(_curSelSetSecondary[0]);
-            //console.debug(tmpObj);
-            
+                
+            // if a single item, select and isolate same thing in 3D.
+        var curSelSetSecondary = _viewerSecondary.getSelection();
+        if (curSelSetSecondary.length === 1) {            
             _blockEventSecondary = true;
+            
+            //_viewerMain.clearSelection();   // reset to nothing selected (otherwise we end up in cases where it just adds to the existing selection)
             
                 // normal behavior is to isolate and zoom into the selected object, but we can only do that in 3D.
             if (_viewerMain.model.is2d() == false) {
-                _viewerMain.isolateById(_curSelSetSecondary);
-                _viewerMain.select(_curSelSetSecondary);
-                _viewerMain.fitToView(_curSelSetSecondary);
+                _viewerMain.select(curSelSetSecondary);
+                _viewerMain.isolate(curSelSetSecondary);
+                _viewerMain.fitToView(curSelSetSecondary);
             }
             else {
-                workaround_2D_selectMainViewer(_curSelSetSecondary);   // Call work-around to select objects in secondary view (see file TestFuncs.js)
-                _viewerMain.fitToView(_curSelSetSecondary);
+                _viewerMain.select(curSelSetSecondary);   // Call work-around to select objects in secondary view (see file TestFuncs.js)
+                _viewerMain.fitToView(curSelSetSecondary);
             }
             
             _blockEventSecondary = false;
         }
+    });
+    
+        // when we change sheets, we want to re-select things after this sheet is loaded
+    _viewerSecondary.addEventListener(Autodesk.Viewing.GEOMETRY_LOADED_EVENT, function (event) {
+        _blockEventMain = true; // prevent normal event of select/isolate/fit in main viewer
+        if (_viewerMain.model)
+            _viewerSecondary.select(_viewerMain.getSelection());
+        _blockEventMain = false;
     });
 }
     
@@ -262,14 +288,7 @@ function loadDocument(urnStr) {
         loadViewMenuOptions();                   // populate UX with views we just retrieved
         initializeViewerMain();
         initializeViewerSecondary();
-        
-            // when the geometry is loaded, automatically run the first report
-        disableReportMenu();
-        _viewerMain.addEventListener(Autodesk.Viewing.GEOMETRY_LOADED_EVENT, function (event) {
-            enableReportMenu();
-            runReport(-1);   // run the currently selected report (the first one if this is the first model loaded, current one if loading a subsequent model)
-        });
-        
+            
             // load up first 3D view by default into the primary viewer
         if (_views3D.length > 0) {
             loadView(_viewerMain, _views3D[0]);   
@@ -296,7 +315,7 @@ function loadDocument(urnStr) {
 
         
     }, function(errorCode, errorMsg) {
-        alert('Load Error: ' + errorMsg);
+        alert('Load Error: ' + errorCode + " " + errorMsg);
     });
 }
 
@@ -337,6 +356,9 @@ function dbgPrintLmvVersion()
 
     // called when HTML page is finished loading, trigger loading of default model into viewer
 function loadInitialModel() {
+
+    console.log("onload: loadInitialModel in LoadModel.js");
+
     dbgPrintLmvVersion(); 
 
     loadModelMenuOptions();                  // populate the list of available models for the user
