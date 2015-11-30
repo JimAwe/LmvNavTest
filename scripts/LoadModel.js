@@ -13,11 +13,16 @@
 var _viewerMain = null;             // the viewer
 var _viewerSecondary = null;        // the viewer
 var _loadedDocument = null;
+var _loadedSecondaryDocument = null;
+var _selectedPlantModel = null;
 var _views2D = null;
 var _views3D = null;
 
 var _blockEventMain = false;
 var _blockEventSecondary = false;
+var _blockPropagateSelection = false;
+
+var _secondaryModelLeafNodes = null;
 
     // setup for STAGING
 /*var _viewerEnv = "AutodeskStaging";
@@ -70,6 +75,20 @@ var _lmvModelOptions = [
     
     { label : "AC11 Institute (IFC)",       urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6YWRza19xdWlja3N0YXJ0L0FDMTEtSW5zdGl0dXRlLVZhci0yLUlGQy5pZmM="},
     { label : "Hunter Residence (SKP)",     urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvTUFUVEhFV19IVU5URS1SRVMtMDRfRVBELnNrcA=="},
+
+];
+
+var _lmvPlantModelOptions = [
+
+    {
+        label: "1-PE-001 (Plant 3D)", urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvMS1QRS0wMDEtTW9kZWwuZHdmeA==",
+        views:
+        [
+            { label: "1-A1-1001 (P&ID)", urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvMS1BMS0xMDAxLmR3Zng=" },
+            { label: "1-A1-1002 (P&ID)", urn: "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6bG12ZGJnX3Byb2QvMS1BMS0xMDAyLmR3Zng=" }
+        ]
+    }
+
 ];
 
 function blankOutReportPane() {
@@ -90,6 +109,14 @@ function loadModelMenuOptions() {
             text : item.label 
         }));
     });
+
+    $.each(_lmvPlantModelOptions, function (i, item) {
+        sel.append($("<option>", {
+            value: i + _lmvModelOptions.length,
+            text: item.label
+        }));
+    });
+
 }
 
     // user selected a new model to load
@@ -97,8 +124,18 @@ function loadModelMenuOptions() {
      evt.preventDefault();
      
      var index = parseInt($("#pu_modelToLoad option:selected").val(), 10);
-     console.log("Changing model to: " + _lmvModelOptions[index].label);
-     loadDocument(_lmvModelOptions[index].urn);
+     
+     // determine if regular model or plant model
+     //
+     if (index >= _lmvModelOptions.length) {
+         index = index - _lmvModelOptions.length;
+         console.log("Changing model to: " + _lmvPlantModelOptions[index].label);
+         loadPlantDocument(_lmvPlantModelOptions[index])
+     }
+     else {
+         console.log("Changing model to: " + _lmvModelOptions[index].label);
+         loadDocument(_lmvModelOptions[index].urn);
+     }
 
      uninitializePinPanel();
      unitializeThemePanel();
@@ -130,22 +167,42 @@ function loadViewMenuOptions() {
     });
 }
 
+// populate the popup menu with the avaialable views to load (from the array above)
+function loadPlantViewMenuOptions(views) {
+    var sel = $("#pu_viewToLoad");
+
+    sel.find("option").remove().end();  // remove all existing options
+
+    // add the 2D options
+    $.each(views, function (i, item) {
+        sel.append($("<option>", {
+            value: i + 5000,    // make Plant 2D views have a value greater than 5000 so we can tell from others
+            text: item.label
+        }));
+    });
+}
+
     // user selected a new view to load
  $("#pu_viewToLoad").change(function(evt) {  
     evt.preventDefault();
      
     var index = parseInt($("#pu_viewToLoad option:selected").val(), 10);
      
-    if (index >= 1000) {    // 2D views we gave a higher index to in the Popup menu
+    if (index >= 5000) {
+        index -= 5000;
+        console.log("Changing to 2D view: " + _selectedPlantModel.views[index].label);
+        loadPlantSecondaryDocument(index);
+    }
+    else if (index >= 1000) {    // 2D views we gave a higher index to in the Popup menu
         index -= 1000;
         console.log("Changing to 2D view: " + _views2D[index].name);
         switchSheet();
-        loadView(_viewerSecondary, _views2D[index]);
+        loadView(_loadedDocument, _viewerSecondary, _views2D[index]);
     }
     else {
         console.log("Changing to 3D view: " + _views3D[index].name);
         switchSheet();
-        loadView(_viewerSecondary, _views3D[index]);
+        loadView(_loadedDocument, _viewerSecondary, _views3D[index]);
     }
 });
 
@@ -156,6 +213,175 @@ function switchSheet() {
     }
 
     _viewerSecondary.setUp();    // set it up again for a new asset to be loaded
+}
+
+function mainViewerSelectionChanged(event) {        
+    if (_blockEventSecondary)
+        return;
+        
+    // if a single item selected in 3D, select that same item in 2D.
+    var curSelSetMain = _viewerMain.getSelection();
+    //if (curSelSetMain.length === 1) {
+    _blockEventMain = true;
+    _viewerSecondary.select(curSelSetMain)//select objects in secondary view
+    _blockEventMain = false;
+    //}
+}
+
+function secondaryViewerSelectionChanged(event) {
+    if (_blockEventMain)
+        return;
+                
+    // if a single item, select and isolate same thing in 3D.
+    var curSelSetSecondary = _viewerSecondary.getSelection();
+    if (curSelSetSecondary.length === 1) {            
+        _blockEventSecondary = true;
+            
+        //_viewerMain.clearSelection();   // reset to nothing selected (otherwise we end up in cases where it just adds to the existing selection)
+            
+        // normal behavior is to isolate and zoom into the selected object, but we can only do that in 3D.
+        if (_viewerMain.model.is2d() == false) {
+            _viewerMain.select(curSelSetSecondary);
+            _viewerMain.isolate(curSelSetSecondary);
+            _viewerMain.fitToView(curSelSetSecondary);
+        }
+        else {
+            _viewerMain.select(curSelSetSecondary);   // Call work-around to select objects in secondary view (see file TestFuncs.js)
+            _viewerMain.fitToView(curSelSetSecondary);
+        }
+            
+        _blockEventSecondary = false;
+    }
+}
+
+function selectMatching(viewer, prop_name, prop_value, leaf_nodes, callback) {
+    console.log("Queueing selection of " + prop_name + " = " + prop_value);
+    var selected = [];
+
+    function isMatch(obj) {
+        var isMatch = false;
+        // and try to find prop_name
+        obj.properties.forEach(function (item_prop) {
+            // with a matching value
+            if (item_prop.displayName.localeCompare(prop_name) == 0 &&
+                item_prop.displayValue.localeCompare(prop_value) == 0) {
+                isMatch = true;
+            }
+            // special line number matching check; selecting 3D object 
+            else if (prop_name.localeCompare("LineNumberTag") == 0 &&
+                     item_prop.displayName.localeCompare("Tag") == 0) {
+                var tokens = item_prop.displayValue.split("-");
+                // temp logic; should do something better
+                if (tokens.length > 3) {
+                    // check the last token to see if it matches
+                    if (tokens[tokens.length - 1].localeCompare(prop_value) == 0) {
+                        isMatch = true;
+                    }
+                }
+            }
+            // special line number matching check; selecting 2D SLINE
+            else if (item_prop.displayName.localeCompare("LineNumberTag") == 0) {
+                var tokens = prop_value.split("-");
+                // temp logic; should do something better
+                if (tokens.length > 3) {
+                    // check the last token to see if it matches
+                    if (tokens[tokens.length - 1].localeCompare(item_prop.displayValue) == 0) {
+                        isMatch = true;
+                    }
+                }
+            }
+        });
+        return isMatch;
+    }
+
+    viewer.model.getBulkProperties(leaf_nodes, ["Tag", "LineNumberTag"], function (objs) {
+        objs.forEach(function (obj) {
+            if (isMatch(obj)) {
+                selected.push(obj.dbId);
+            }
+        });
+        callback(selected);
+    });
+}
+
+// get selected object properties and propagate selection
+function propagateSelection(src_viewer, dst_viewer, props, leaf_nodes) {
+    var select_promises = [];
+    var selected = [];
+
+    var selset = src_viewer.getSelection();
+
+    function getSelectPromise(prop) {
+        var deferred = $.Deferred();
+
+        // so that matching items in destination view
+        // can be found and selected
+        selectMatching(dst_viewer, prop.displayName, prop.displayValue, leaf_nodes, function (curr_selected) {
+            selected = selected.concat(curr_selected);
+            deferred.resolve();
+        });
+
+        return deferred.promise();
+    }
+
+    src_viewer.model.getBulkProperties(selset, props, function (objs) {
+        objs.forEach(function (obj) {
+            obj.properties.forEach(function (item_prop) {
+                select_promises.push(getSelectPromise(item_prop));
+            });
+        });
+
+        // when all the selectMatching() promises are fulfilled, then select objects
+        $.when.apply($, select_promises).then(function () {
+            console.log("Selecting " + selected.length + " items in target view.");
+            if (selected.length > 0) {
+                // normal behavior is to isolate and zoom into the selected object, but we can only do that in 3D.
+                dst_viewer.select(selected);
+                if (dst_viewer.model.is2d() == false) {
+                    dst_viewer.isolate(selected);
+                }
+                dst_viewer.fitToView(selected);
+            }
+
+            // unblock propagation now
+            _blockPropagateSelection = false;
+        });
+    });
+}
+
+function plantMainViewerSelectionChanged(event) {
+    if (_blockPropagateSelection)
+        return;
+
+    // workaround to getObjectTree() not having nodes in 2D dwgs
+    if (_secondaryModelLeafNodes.length == 0) {
+        var num = _viewerSecondary.model.getData().hasObjectProperties;
+        for (var i = 1; i <= num; ++i) {
+            _secondaryModelLeafNodes.push(i);
+        }
+    }
+
+    _blockPropagateSelection = true;
+    propagateSelection(_viewerMain, _viewerSecondary, ["Tag", "LineNumberTag"], _secondaryModelLeafNodes);
+}
+
+function plantSecondaryViewerSelectionChanged(event) {
+    if (_blockPropagateSelection)
+        return;
+
+    _blockPropagateSelection = true;
+    propagateSelection(_viewerSecondary, _viewerMain, ["Tag"], _modelLeafNodes);
+}
+
+function secondaryViewerGeometryLoaded(event) {
+    _blockEventMain = true; // prevent normal event of select/isolate/fit in main viewer
+    if (_viewerMain.model)
+        _viewerSecondary.select(_viewerMain.getSelection());
+    _blockEventMain = false;
+}
+
+function plantSecondaryViewerGeometryLoaded(event) {
+    _secondaryModelLeafNodes = [];
 }
 
 // STEPS:
@@ -169,7 +395,7 @@ function switchSheet() {
 
 
     // initialize the viewer into the HTML placeholder
-function initializeViewerMain() {
+function initializeViewerMain(sel_changed_callback) {
     
         // if we already have something loaded, uninitialize and re-init (can't just load a new file!:  ?? is that a bug?)
     if (_viewerMain !== null) {
@@ -199,21 +425,10 @@ function initializeViewerMain() {
     });
     
         // when selecting in the Primary viewer, select the matching items in the Secondary viewer
-    _viewerMain.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, function (event) {        
-        if (_blockEventSecondary)
-            return;
-        
-            // if a single item selected in 3D, select that same item in 2D.
-        var curSelSetMain = _viewerMain.getSelection();
-        //if (curSelSetMain.length === 1) {
-            _blockEventMain = true;
-            _viewerSecondary.select(curSelSetMain)//select objects in secondary view
-            _blockEventMain = false;
-        //}
-    });
+    _viewerMain.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, sel_changed_callback);
 }
 
-function initializeViewerSecondary() {
+function initializeViewerSecondary(sel_changed_callback, geom_loaded_callback) {
     
         // if we already have something loaded, uninitialize and re-init (can't just load a new file!:  ?? is that a bug?)
     if (_viewerSecondary !== null) {
@@ -230,40 +445,11 @@ function initializeViewerSecondary() {
         console.log("ERROR Code: " + retCode);      // TBD: do real error handling here
     }
     
-        // when selecting objects in the Secondary viewer, also select the matching itmes in the Primary viewer
-    _viewerSecondary.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, function (event) {
-        if (_blockEventMain)
-            return;
-                
-            // if a single item, select and isolate same thing in 3D.
-        var curSelSetSecondary = _viewerSecondary.getSelection();
-        if (curSelSetSecondary.length === 1) {            
-            _blockEventSecondary = true;
-            
-            //_viewerMain.clearSelection();   // reset to nothing selected (otherwise we end up in cases where it just adds to the existing selection)
-            
-                // normal behavior is to isolate and zoom into the selected object, but we can only do that in 3D.
-            if (_viewerMain.model.is2d() == false) {
-                _viewerMain.select(curSelSetSecondary);
-                _viewerMain.isolate(curSelSetSecondary);
-                _viewerMain.fitToView(curSelSetSecondary);
-            }
-            else {
-                _viewerMain.select(curSelSetSecondary);   // Call work-around to select objects in secondary view (see file TestFuncs.js)
-                _viewerMain.fitToView(curSelSetSecondary);
-            }
-            
-            _blockEventSecondary = false;
-        }
-    });
-    
         // when we change sheets, we want to re-select things after this sheet is loaded
-    _viewerSecondary.addEventListener(Autodesk.Viewing.GEOMETRY_LOADED_EVENT, function (event) {
-        _blockEventMain = true; // prevent normal event of select/isolate/fit in main viewer
-        if (_viewerMain.model)
-            _viewerSecondary.select(_viewerMain.getSelection());
-        _blockEventMain = false;
-    });
+    _viewerSecondary.addEventListener(Autodesk.Viewing.GEOMETRY_LOADED_EVENT, geom_loaded_callback);
+
+    // when selecting objects in the Secondary viewer, also select the matching itmes in the Primary viewer
+    _viewerSecondary.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, sel_changed_callback);
 }
     
 
@@ -271,6 +457,7 @@ function initializeViewerSecondary() {
 function loadDocument(urnStr) {
     
     _loadedDocument = null; // reset to null if reloading
+    _loadedSecondaryDocument = null;
 
     if (!urnStr || (0 === urnStr.length)) {
         alert("You must specify a URN!");
@@ -286,16 +473,16 @@ function loadDocument(urnStr) {
         _views2D = Autodesk.Viewing.Document.getSubItemsWithProperties(document.getRootItem(), {'type':'geometry', 'role':'2d'}, true);
         
         loadViewMenuOptions();                   // populate UX with views we just retrieved
-        initializeViewerMain();
-        initializeViewerSecondary();
+        initializeViewerMain(mainViewerSelectionChanged);
+        initializeViewerSecondary(secondaryViewerSelectionChanged, secondaryViewerGeometryLoaded);
             
             // load up first 3D view by default into the primary viewer
         if (_views3D.length > 0) {
-            loadView(_viewerMain, _views3D[0]);   
+            loadView(_loadedDocument, _viewerMain, _views3D[0]);
         }
         else {      // there weren't any 3D views!
             if (_views2D.length > 0) {
-                loadView(_viewerMain, _views2D[0]);
+                loadView(_loadedDocument, _viewerMain, _views2D[0]);
                 $('#pu_viewToLoad').val('1000'); // selects first option in 2D list
             }
             else {
@@ -304,19 +491,92 @@ function loadDocument(urnStr) {
         }
             // now load the Secondary viewer with the first 2D view by default
         if (_views2D.length > 0) {
-            loadView(_viewerSecondary, _views2D[0]);
+            loadView(_loadedDocument, _viewerSecondary, _views2D[0]);
             $('#pu_viewToLoad').val('1000'); // selects first option in 2D list
         }
         else {
             console.log("WARNING: No 2D views found for secondary view, using additional 3D view");
             if (_views3D.length > 0)
-                loadView(_viewerSecondary, _views3D[0]);
+                loadView(_loadedDocument, _viewerSecondary, _views3D[0]);
         }
 
         
     }, function(errorCode, errorMsg) {
         alert('Load Error: ' + errorCode + " " + errorMsg);
     });
+}
+
+function loadPlantSecondaryDocument(index)
+{
+    _loadedSecondaryDocument = null;
+    _views2D = null;
+
+    initializeViewerSecondary(plantSecondaryViewerSelectionChanged, plantSecondaryViewerGeometryLoaded);
+
+    if (_selectedPlantModel.views == null ||
+        _selectedPlantModel.views.length == 0) {
+        alert("ERROR: No 2D view found in this drawing!");
+        return;
+    }
+
+    var fullUrnStr = "urn:" + _selectedPlantModel.views[index].urn;
+    Autodesk.Viewing.Document.load(fullUrnStr, function (document) {
+        _loadedSecondaryDocument = document; // keep this in a global var so we can reference it in other spots
+
+        // get all 2D views 
+        _views2D = Autodesk.Viewing.Document.getSubItemsWithProperties(document.getRootItem(), { 'type': 'geometry', 'role': '2d' }, true);
+
+        // load up first 2D view by default into the secondary viewer
+        if (_views2D.length > 0) {
+            loadView(_loadedSecondaryDocument, _viewerSecondary, _views2D[0]);
+        }
+        else {
+            alert("ERROR: No 2D views found in this drawing!");
+        }
+
+    }, function (errorCode, errorMsg) {
+        alert('Load Error: ' + errorCode + " " + errorMsg);
+    });
+}
+
+// load a specific document into the intialized viewer
+function loadPlantDocument(plant_model) {
+
+    _loadedDocument = null; // reset to null if reloading
+    _selectedPlantModel = plant_model;
+
+    if (plant_model == null ||
+        plant_model.urn == null ||
+        (0 === plant_model.urn.length))
+    {
+        alert("You must specify a URN!");
+        return;
+    }
+
+    loadPlantViewMenuOptions(plant_model.views);                   // populate UX with views
+    initializeViewerMain(plantMainViewerSelectionChanged);
+
+    var fullUrnStr = "urn:" + plant_model.urn;
+    Autodesk.Viewing.Document.load(fullUrnStr, function (document) {
+        _loadedDocument = document; // keep this in a global var so we can reference it in other spots
+
+        // get all the 3D views
+        _views3D = Autodesk.Viewing.Document.getSubItemsWithProperties(document.getRootItem(), { 'type': 'geometry', 'role': '3d' }, true);
+
+        // load up first 3D view by default into the primary viewer
+        if (_views3D.length > 0) {
+            loadView(_loadedDocument, _viewerMain, _views3D[0]);
+        }
+        else {      // there weren't any 3D views!
+            alert("ERROR: No 3D view found in this drawing!");
+        }
+
+    }, function (errorCode, errorMsg) {
+        alert('Load Error: ' + errorCode + " " + errorMsg);
+    });
+
+    // load up the first 2D view by default in the secondary viewer
+    loadPlantSecondaryDocument(0);
 }
 
     // for now, just simple diagnostic functions to make sure we know what is happing
@@ -331,11 +591,11 @@ function loadViewErrorFunc()
 }
 
     // load a particular viewable into the viewer (either Primary or Secondary depending on what's passed in)
-function loadView(viewer, viewObj) {
-    var path = _loadedDocument.getViewablePath(viewObj);
+function loadView(document, viewer, viewObj) {
+    var path = document.getViewablePath(viewObj);
     console.log("Loading view URN: " + path);
     
-    viewer.load(path, _loadedDocument.getPropertyDbPath(), loadViewSuccessFunc, loadViewErrorFunc);
+    viewer.load(path, document.getPropertyDbPath(), loadViewSuccessFunc, loadViewErrorFunc);
 }
 
     // wrap this in a simple function so we can pass it into the Initializer options object
